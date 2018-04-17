@@ -75,6 +75,7 @@ defmodule EWallet.Web.Paginator do
             "" -> @default_max_per_page
             nil -> @default_max_per_page
             value when is_binary(value) -> String.to_integer(value)
+            value -> value
           end
 
         value ->
