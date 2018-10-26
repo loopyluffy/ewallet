@@ -8,11 +8,12 @@ defmodule EWallet.Web.Orchestrator do
   """
 
   alias EWallet.Web.{MatchAllParser, Paginator, Preloader, SearchParser, SortParser}
+  alias EWalletDB.Repo
 
-  def query(query, overlay, attrs \\ nil) do
+  def query(query, overlay, attrs \\ nil, repo \\ Repo) do
     query
     |> build_query(overlay, attrs)
-    |> Paginator.paginate_attrs(attrs)
+    |> Paginator.paginate_attrs(attrs, repo)
   end
 
   def build_query(query, overlay, attrs \\ nil) do
