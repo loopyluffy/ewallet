@@ -72,7 +72,10 @@ jobs:
       - *restore_ewallet_test_build
       - run:
           name: Retrieving eWallet dependencies
-          command: make deps-ewallet
+          command: |
+            # Force rebuilding bcrypt_elixir otherwise it's gonna fail loading NIFs
+            find deps/ -name bcrypt_elixir -print0 |xargs -0 rm -rf ||true
+            make deps-ewallet
       - save_cache:
           name: Caching eWallet dependencies
           key: v1-ewallet-deps-{{ checksum "mix.lock" }}
@@ -80,7 +83,10 @@ jobs:
             - deps
       - run:
           name: Build eWallet in test environment
-          command: make build-test
+          command: |
+            # Force rebuilding bcrypt_elixir otherwise it's gonna fail loading NIFs
+            find _build/ -name bcrypt_elixir -print0 |xargs -0 rm -rf ||true
+            make build-test
       - save_cache:
           name: Caching eWallet test artifacts
           key: v1-ewallet-test-build-{{ checksum "mix.exs" }}
@@ -119,7 +125,11 @@ jobs:
       - *restore_ewallet_prod_build
       - run:
           name: Build eWallet in production environment
-          command: make build-prod
+          command: |
+            # Force rebuilding bcrypt_elixir otherwise it's gonna fail loading NIFs
+            find deps/ -name bcrypt_elixir -print0 |xargs -0 rm -rf ||true
+            find _build/ -name bcrypt_elixir -print0 |xargs -0 rm -rf ||true
+            make build-prod
       - save_cache:
           name: Caching eWallet artifacts
           key: v1-ewallet-prod-build-{{ checksum "mix.exs" }}
@@ -131,7 +141,7 @@ jobs:
       - run:
           name: Load Docker image layer cache
           command: |
-            docker load -i ~/caches/docker-layers.tar || true
+            docker load -i ~/caches/docker-layers.tar ||true
       - run:
           name: Build Docker image
           command: |
