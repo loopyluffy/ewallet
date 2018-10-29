@@ -1,0 +1,101 @@
+version: 2
+
+presets:
+  defaults: &defaults
+    working_directory: ~/src
+    docker:
+      - image: omisegoimages/ewallet-builder:beec6e8
+
+  restore_repo: &restore_repo
+    restore_cache:
+      keys:
+        - v1-repo-{{ .Branch }}-{{ .Revision }}
+        - v1-repo-{{ .Branch }}-
+        - v1-repo-
+
+  restore_ewallet_deps: &restore_ewallet_deps
+    restore_cache:
+      keys:
+        - v1-ewallet-deps-{{ checksum "mix.lock" }}
+        - v1-ewallet-deps-
+
+  restore_ewallet_assets_deps: &restore_ewallet_assets_deps
+    restore_cache:
+      keys:
+        - v1-ewallet-assets-deps-{{ checksum "apps/admin_panel/assets/yarn.lock" }}
+        - v1-ewallet-assets-deps-
+
+  restore_ewallet_test_build: &restore_ewallet_test_build
+    restore_cache:
+      keys:
+        - v1-ewallet-test-build-{{ checksum "mix.exs" }}
+        - v1-ewallet-test-build-
+
+jobs:
+  checkout_code:
+    <<: *defaults
+    steps:
+      - *restore_repo
+      - checkout
+      - save_cache:
+          key: v1-repo-{{ .Branch }}-{{ .Revision }}
+          paths:
+            - .
+
+  test_ewallet:
+    <<: *defaults
+    docker:
+      - image: omisegoimages/ewallet-builder:beec6e8
+      - image: postgres:9.6-alpine
+    steps:
+      - *restore_repo
+      - *restore_ewallet_deps
+      - *restore_ewallet_test_build
+      - run:
+          name: Retrieve eWallet dependencies
+          command: make deps-ewallet
+      - save_cache:
+          key: v1-ewallet-deps-{{ checksum "mix.lock" }}
+          paths:
+            - deps
+      - run:
+          name: Build eWallet in test environment
+          command: make build-test
+      - save_cache:
+          key: v1-ewallet-test-build-{{ checksum "mix.exs" }}
+          paths:
+            - _build/test
+      - run:
+          name: Run eWallet tests
+          command: make test-ewallet
+          environment:
+            DATABASE_URL: postgresql://postgres:@localhost:5432/ewallet
+            LOCAL_LEDGER_DATABASE_URL: postgresql://postgres:@localhost:5432/ledger
+
+  test_assets:
+    <<: *defaults
+    steps:
+      - *restore_repo
+      - *restore_ewallet_assets_deps
+      - run:
+          name: Retrieve eWallet assets dependencies
+          command: make deps-assets
+      - save_cache:
+          key: v1-ewallet-assets-deps-{{ checksum "apps/admin_panel/assets/yarn.lock" }}
+          paths:
+            - apps/admin_panel/assets/node_modules
+      - run:
+          name: Run assets tests
+          command: make test-assets
+
+workflows:
+  version: 2
+  test_build:
+    jobs:
+      - checkout_code
+      - test_ewallet:
+          requires:
+            - checkout_code
+      - test_assets:
+          requires:
+            - checkout_code
