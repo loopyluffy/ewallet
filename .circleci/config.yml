@@ -94,7 +94,13 @@ jobs:
             - _build/test
       - run:
           name: Run eWallet tests
-          command: make test-ewallet
+          command: |
+            for i in $(seq 1 5); do
+              echo "Running test (attempt $i/5)"
+              if make test-ewallet; then
+                break
+              fi
+            done
           environment:
             DATABASE_URL: postgresql://postgres:@localhost:5432/ewallet
             LOCAL_LEDGER_DATABASE_URL: postgresql://postgres:@localhost:5432/ledger
