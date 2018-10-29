@@ -8,6 +8,7 @@ presets:
 
   restore_repo: &restore_repo
     restore_cache:
+      name: Restoring repository
       keys:
         - v1-repo-{{ .Branch }}-{{ .Revision }}
         - v1-repo-{{ .Branch }}-
@@ -15,21 +16,38 @@ presets:
 
   restore_ewallet_deps: &restore_ewallet_deps
     restore_cache:
+      name: Restoring eWallet dependencies from cache
       keys:
         - v1-ewallet-deps-{{ checksum "mix.lock" }}
         - v1-ewallet-deps-
 
   restore_ewallet_assets_deps: &restore_ewallet_assets_deps
     restore_cache:
+      name: Restoring eWallet assets dependencies from cache
       keys:
         - v1-ewallet-assets-deps-{{ checksum "apps/admin_panel/assets/yarn.lock" }}
         - v1-ewallet-assets-deps-
 
   restore_ewallet_test_build: &restore_ewallet_test_build
     restore_cache:
+      name: Restoring eWallet test artifacts from cache
       keys:
         - v1-ewallet-test-build-{{ checksum "mix.exs" }}
         - v1-ewallet-test-build-
+
+  restore_ewallet_prod_build: &restore_ewallet_prod_build
+    restore_cache:
+      name: Restoring eWallet production artifacts from cache
+      keys:
+        - v1-ewallet-prod-build-{{ checksum "mix.exs" }}
+        - v1-ewallet-prod-build-
+
+  restore_docker_image: &restore_docker_image
+    restore_cache:
+      name: Restoring Docker image artifacts from cache
+      keys:
+        - v1-docker-image-{{ checksum "Dockerfile" }}
+        - v1-docker-image-
 
 jobs:
   checkout_code:
@@ -38,6 +56,7 @@ jobs:
       - *restore_repo
       - checkout
       - save_cache:
+          name: Saving repository
           key: v1-repo-{{ .Branch }}-{{ .Revision }}
           paths:
             - .
@@ -52,9 +71,10 @@ jobs:
       - *restore_ewallet_deps
       - *restore_ewallet_test_build
       - run:
-          name: Retrieve eWallet dependencies
+          name: Retrieving eWallet dependencies
           command: make deps-ewallet
       - save_cache:
+          name: Caching eWallet dependencies
           key: v1-ewallet-deps-{{ checksum "mix.lock" }}
           paths:
             - deps
@@ -62,6 +82,7 @@ jobs:
           name: Build eWallet in test environment
           command: make build-test
       - save_cache:
+          name: Caching eWallet test artifacts
           key: v1-ewallet-test-build-{{ checksum "mix.exs" }}
           paths:
             - _build/test
@@ -78,15 +99,56 @@ jobs:
       - *restore_repo
       - *restore_ewallet_assets_deps
       - run:
-          name: Retrieve eWallet assets dependencies
+          name: Retriving eWallet assets dependencies
           command: make deps-assets
       - save_cache:
+          name: Caching eWallet assets dependencies
           key: v1-ewallet-assets-deps-{{ checksum "apps/admin_panel/assets/yarn.lock" }}
           paths:
             - apps/admin_panel/assets/node_modules
       - run:
           name: Run assets tests
           command: make test-assets
+
+  build_ewallet:
+    <<: *defaults
+    steps:
+      - *restore_repo
+      - *restore_ewallet_deps
+      - *restore_ewallet_assets_deps
+      - *restore_ewallet_prod_build
+      - run:
+          name: Build eWallet in production environment
+          command: make build-prod
+      - save_cache:
+          name: Caching eWallet artifacts
+          key: v1-ewallet-prod-build-{{ checksum "mix.exs" }}
+          paths:
+            - _build/prod/.mix
+            - _build/prod/consolidated
+            - _build/prod/lib
+      - *restore_docker_image
+      - run:
+          name: Load Docker image layer cache
+          command: |
+            docker load -i ~/caches/docker-layers.tar || true
+      - run:
+          name: Build Docker image
+          command: |
+            REL_VERSION=$(awk '/version:/ { gsub(/[^0-9a-z\.\-]+/, "", $2); print $2 }' < apps/ewallet/mix.exs)
+            IMAGE_NAME="$CIRCLE_PROJECT_USERNAME/$CIRCLE_PROJECT_REPONAME"
+            mv "_build/prod/rel/ewallet/releases/$REL_VERSION/ewallet.tar.gz" ewallet.tar.gz
+            docker build --cache-from "$IMAGE_NAME" -t "$IMAGE_NAME" .
+      - run:
+          name: Create Docker image layer cache
+          command: |
+            IMAGE_NAME="$CIRCLE_PROJECT_USERNAME/$CIRCLE_PROJECT_REPONAME"
+            mkdir -p ~/caches
+            docker save -o ~/caches/docker-layers.tar "$IMAGE_NAME"
+      - save_cache:
+          paths:
+            - ~/caches/docker-layers.tar
+          key: v1-docker-image-{{ checksum "Dockerfile" }}
 
 workflows:
   version: 2
@@ -99,3 +161,7 @@ workflows:
       - test_assets:
           requires:
             - checkout_code
+      - build_ewallet:
+          requires:
+            - test_ewallet
+            - test_assets
