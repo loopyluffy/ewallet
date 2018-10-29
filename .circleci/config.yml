@@ -4,7 +4,7 @@ presets:
   defaults: &defaults
     working_directory: ~/src
     docker:
-      - image: omisegoimages/ewallet-builder:beec6e8
+      - image: omisegoimages/ewallet-builder:stable
 
   restore_repo: &restore_repo
     restore_cache:
@@ -64,7 +64,7 @@ jobs:
   test_ewallet:
     <<: *defaults
     docker:
-      - image: omisegoimages/ewallet-builder:beec6e8
+      - image: omisegoimages/ewallet-builder:stable
       - image: postgres:9.6-alpine
     steps:
       - *restore_repo
