@@ -129,6 +129,7 @@ jobs:
       - *restore_ewallet_deps
       - *restore_ewallet_assets_deps
       - *restore_ewallet_prod_build
+      - setup_remote_docker
       - run:
           name: Build eWallet in production environment
           command: |
