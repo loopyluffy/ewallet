@@ -5,6 +5,8 @@ presets:
     working_directory: ~/src
     docker:
       - image: omisegoimages/ewallet-builder:stable
+    environment:
+      IMAGE_NAME: "omisego/ewallet"
 
   restore_repo: &restore_repo
     restore_cache:
@@ -49,6 +51,11 @@ presets:
         - v1-docker-image-{{ checksum "Dockerfile" }}
         - v1-docker-image-
 
+  attach_workspace: &attach_workspace
+    attach_workspace:
+      name: Attaching workspace
+      at: /tmp/workspace
+
 jobs:
   checkout_code:
     <<: *defaults
@@ -74,7 +81,7 @@ jobs:
           name: Retrieving eWallet dependencies
           command: |
             # Force rebuilding bcrypt_elixir otherwise it's gonna fail loading NIFs
-            find deps/ -name bcrypt_elixir -print0 |xargs -0 rm -rf ||true
+            find deps/ -name bcrypt_elixir -print0 | xargs -0 rm -rf || true
             make deps-ewallet
       - save_cache:
           name: Caching eWallet dependencies
@@ -82,10 +89,10 @@ jobs:
           paths:
             - deps
       - run:
-          name: Build eWallet in test environment
+          name: Building eWallet in test environment
           command: |
             # Force rebuilding bcrypt_elixir otherwise it's gonna fail loading NIFs
-            find _build/ -name bcrypt_elixir -print0 |xargs -0 rm -rf ||true
+            find _build/ -name bcrypt_elixir -print0 | xargs -0 rm -rf || true
             make build-test
       - save_cache:
           name: Caching eWallet test artifacts
@@ -93,7 +100,7 @@ jobs:
           paths:
             - _build/test
       - run:
-          name: Run eWallet tests
+          name: Running eWallet tests
           command: |
             for i in $(seq 1 5); do
               echo "Running test (attempt $i/5)"
@@ -131,11 +138,11 @@ jobs:
       - *restore_ewallet_prod_build
       - setup_remote_docker
       - run:
-          name: Build eWallet in production environment
+          name: Building eWallet in production environment
           command: |
             # Force rebuilding bcrypt_elixir otherwise it's gonna fail loading NIFs
-            find deps/ -name bcrypt_elixir -print0 |xargs -0 rm -rf ||true
-            find _build/ -name bcrypt_elixir -print0 |xargs -0 rm -rf ||true
+            find deps/ -name bcrypt_elixir -print0 | xargs -0 rm -rf || true
+            find _build/ -name bcrypt_elixir -print0 | xargs -0 rm -rf || true
             make build-prod
       - save_cache:
           name: Caching eWallet artifacts
@@ -146,26 +153,73 @@ jobs:
             - _build/prod/lib
       - *restore_docker_image
       - run:
-          name: Load Docker image layer cache
+          name: Loading Docker image layer cache
           command: |
-            docker load -i ~/caches/docker-layers.tar ||true
+            docker load -i ~/caches/docker-layers.tar || true
       - run:
-          name: Build Docker image
+          name: Building Docker image
           command: |
             REL_VERSION=$(awk '/version:/ { gsub(/[^0-9a-z\.\-]+/, "", $2); print $2 }' < apps/ewallet/mix.exs)
-            IMAGE_NAME="$CIRCLE_PROJECT_USERNAME/$CIRCLE_PROJECT_REPONAME"
             mv "_build/prod/rel/ewallet/releases/$REL_VERSION/ewallet.tar.gz" ewallet.tar.gz
             docker build --cache-from "$IMAGE_NAME" -t "$IMAGE_NAME" .
       - run:
-          name: Create Docker image layer cache
+          name: Creating Docker image layer cache
           command: |
-            IMAGE_NAME="$CIRCLE_PROJECT_USERNAME/$CIRCLE_PROJECT_REPONAME"
-            mkdir -p ~/caches
+            mkdir -p ~/caches /tmp/workspace
             docker save -o ~/caches/docker-layers.tar "$IMAGE_NAME"
+            cp ~/caches/docker-layers.tar /tmp/workspace/docker-image.tar
       - save_cache:
+          name: Saving Docker image layer cache
           paths:
             - ~/caches/docker-layers.tar
           key: v1-docker-image-{{ checksum "Dockerfile" }}
+      - persist_to_workspace:
+          name: Persisting workspace
+          root: /tmp/workspace
+          paths:
+            - docker-image.tar
+
+  publish_ewallet:
+    <<: *defaults
+    steps:
+      - setup_remote_docker
+      - *attach_workspace
+      - run:
+          name: Publishing Docker image
+          command: |
+            echo $DOCKER_PASS | docker login -u $DOCKER_USER --password-stdin
+            docker load -i /tmp/workspace/docker-image.tar
+
+            IMAGE_TAG=""
+
+            if [ -n "$CIRCLE_TAG" ]; then
+                _ver="${CIRCLE_TAG#*v}"
+
+                # Reduce tags from v1.0.0-pre.1 to 1.0 1.0.0-pre and 1.0.0-pre.1
+                while true; do
+                    case "$_ver" in
+                        *.* ) IMAGE_TAG="$_ver $IMAGE_TAG"; _ver="${_ver%.*}";;
+                        * )   break;;
+                    esac
+                done
+
+                # In case the commit is HEAD of master branch, also tag stable.
+                if [ -n "$CIRCLE_REPOSITORY_URL" ] && [ -n "$CIRCLE_SHA1" ]; then
+                    _ref="refs/heads/master"
+                    _head="$(git ls-remote "$CIRCLE_REPOSITORY_URL" "$_ref" | awk '{ print $1 }')"
+                    if [ "$CIRCLE_SHA1" = "$_head" ]; then
+                        IMAGE_TAG="stable $IMAGE_TAG"
+                    fi
+                fi
+            elif [ "$CIRCLE_BRANCH" = "master" ]; then
+                IMAGE_TAG="dev"
+                IMAGE_TAG="dev-$(git rev-parse --short HEAD)"
+            fi
+
+            for tag in $IMAGE_TAG; do
+                docker tag "$IMAGE_NAME" "$IMAGE_NAME:$tag"
+                docker push "$IMAGE_NAME:$tag"
+            done
 
 workflows:
   version: 2
@@ -182,3 +236,6 @@ workflows:
           requires:
             - test_ewallet
             - test_assets
+      - publish_ewallet:
+          requires:
+            - build_ewallet
