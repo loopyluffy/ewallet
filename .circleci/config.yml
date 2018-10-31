@@ -1,5 +1,6 @@
 version: 2
 
+
 presets:
   defaults: &defaults
     working_directory: ~/src
@@ -56,6 +57,7 @@ presets:
       name: Attaching workspace
       at: /tmp/workspace
 
+
 jobs:
   checkout_code:
     <<: *defaults
@@ -68,11 +70,8 @@ jobs:
           paths:
             - .
 
-  test_ewallet:
+  build_test:
     <<: *defaults
-    docker:
-      - image: omisegoimages/ewallet-builder:stable
-      - image: postgres:9.6-alpine
     steps:
       - *restore_repo
       - *restore_ewallet_deps
@@ -99,18 +98,54 @@ jobs:
           key: v1-ewallet-test-build-{{ checksum "mix.exs" }}
           paths:
             - _build/test
+
+  lint_format:
+    <<: *defaults
+    steps:
+      - *restore_repo
+      - *restore_ewallet_deps
+      - *restore_ewallet_test_build
+      - run:
+          name: Checking code formattings
+          command: make check-format
+
+  lint_credo:
+    <<: *defaults
+    steps:
+      - *restore_repo
+      - *restore_ewallet_deps
+      - *restore_ewallet_test_build
+      - run:
+          name: Checking credo
+          command: |
+            # Force rebuilding bcrypt_elixir otherwise it's gonna fail loading NIFs
+            find deps/ -name bcrypt_elixir -print0 | xargs -0 rm -rf || true
+            find _build/ -name bcrypt_elixir -print0 | xargs -0 rm -rf || true
+            make check-credo
+          environment:
+            MIX_ENV: test
+
+  test_ewallet:
+    <<: *defaults
+    docker:
+      - image: omisegoimages/ewallet-builder:stable
+      - image: postgres:9.6-alpine
+    steps:
+      - *restore_repo
+      - *restore_ewallet_deps
+      - *restore_ewallet_test_build
       - run:
           name: Running eWallet tests
           command: |
-            for i in $(seq 1 5); do
-              echo "Running test (attempt $i/5)"
-              if make test-ewallet; then
-                break
-              fi
-            done
+            # Force rebuilding bcrypt_elixir otherwise it's gonna fail loading NIFs
+            find deps/ -name bcrypt_elixir -print0 | xargs -0 rm -rf || true
+            find _build/ -name bcrypt_elixir -print0 | xargs -0 rm -rf || true
+            make test-ewallet
           environment:
             DATABASE_URL: postgresql://postgres:@localhost:5432/ewallet
             LOCAL_LEDGER_DATABASE_URL: postgresql://postgres:@localhost:5432/ledger
+            USE_JUNIT: 1
+            MIX_ENV: test
 
   test_assets:
     <<: *defaults
@@ -126,7 +161,7 @@ jobs:
           paths:
             - apps/admin_panel/assets/node_modules
       - run:
-          name: Run assets tests
+          name: Running assets tests
           command: make test-assets
 
   build_ewallet:
@@ -221,21 +256,54 @@ jobs:
                 docker push "$IMAGE_NAME:$tag"
             done
 
+
+filters:
+  only_develop: &only_develop
+    filters:
+      branches:
+        ignore:
+          - master
+
+  only_mainline: &only_mainline
+    filters:
+      branches:
+        only:
+          - master
+      tags:
+        only: /^v.*/
+
+
 workflows:
   version: 2
   test_build:
     jobs:
       - checkout_code
+      - build_test:
+          requires:
+            - checkout_code
+
+      - lint_format:
+          <<: *only_develop
+          requires:
+            - build_test
+      - lint_credo:
+          <<: *only_develop
+          requires:
+            - build_test
+
       - test_ewallet:
           requires:
-            - checkout_code
+            - build_test
       - test_assets:
           requires:
-            - checkout_code
+            - build_test
+
       - build_ewallet:
+          <<: *only_mainline
           requires:
             - test_ewallet
             - test_assets
       - publish_ewallet:
+          <<: *only_mainline
           requires:
             - build_ewallet

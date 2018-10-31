@@ -1,8 +1,8 @@
 all: clean build-prod
 
 RELEASE_VERSION := $(shell cat apps/ewallet/mix.exs |grep -i version |tr -d '[:blank:]' |cut -d"\"" -f2)
-DOCKER_NAME     := "omisego/ewallet:dev"
-DOCKER_BUILDER  := "omisegoimages/ewallet-builder:beec6e8"
+DOCKER_NAME     := "omisego/ewallet:dev-local"
+DOCKER_BUILDER  := "omisegoimages/ewallet-builder:stable"
 
 #
 # Setting-up
@@ -39,13 +39,15 @@ clean-assets:
 # Linting
 #
 
-.PHONY: lint
+.PHONY: format check-format check-credo
 
 format:
 	mix format
 
-lint:
+check-format:
 	mix format --check-formatted
+
+check-credo:
 	mix credo
 
 #
