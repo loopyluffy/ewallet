@@ -64,9 +64,9 @@ s6-env REPLACE_OS_VARS=yes
 
 ## Known commands
 ##
-ifelse { test $1 == "foreground" } { /app/bin/ewallet foreground }
-ifelse { test $1 == "initdb" } { /app/bin/ewallet initdb }
-ifelse { test $1 == "seed" } { /app/bin/ewallet seed }
+ifelse { test $1 == "foreground" } { /app/bin/ewallet $@ }
+ifelse { test $1 == "initdb" } { /app/bin/ewallet $@ }
+ifelse { test $1 == "seed" } { /app/bin/ewallet $@ }
 
 ## Fallback; if we're not running the known command, just run it as is.
 ## This is to allow e.g. administrator attaching a shell into the container.
